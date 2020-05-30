@@ -2,7 +2,7 @@ import cvxpy as cp
 import numpy as np
 
 
-def verify(X, p, V, b, utility, M = None):
+def verify(X, p, V, b, utility, M = None, rho = None):
     """
     Given and allocation of goods, prices, valuations and utility types, check if
     a pair of allocation and prices satisfy conditions for a competitive
@@ -23,11 +23,11 @@ def verify(X, p, V, b, utility, M = None):
 
     alloc = np.zeros((numberOfBuyers, numberOfGoods))
     for i in range(numberOfBuyers):
-        alloc[i,:] = compute_util_max_bundle(V[i,:], p, b[i], utility)
+        alloc[i,:] = compute_util_max_bundle(V[i,:], p, b[i], utility, rho = rho)
         
     print(f"Input Allocation:\n{X}\nVerifier Allocation:\n{alloc}")
 
-def compute_util_max_bundle(valuation, prices, budget, utility = "linear"):
+def compute_util_max_bundle(valuation, prices, budget, utility = "linear", rho = None):
     """
     Given a vector of consumer valuations, v, a price vector, p, and a budget, compute the utility
     of a utility-maximizing bundle. Mathematically, solve the linear program:
@@ -44,12 +44,21 @@ def compute_util_max_bundle(valuation, prices, budget, utility = "linear"):
     
     if (utility == "linear"):
         obj = cp.Maximize(x.T @ valuation)
-
+    elif (utility == "leontief"):
+        obj = cp.Maximize( cp.min( cp.multiply(x, valuation) ) )
+    elif (utility == "cobb-douglas"):
+        obj = cp.Maximize( cp.sum(cp.multiply(valuation, cp.log(x))))
+    elif (utility == "ces"):
+        x_rho = cp.power(x, rho)
+        util = valuation.T @ x_rho
+        obj = cp.Maximize((1/rho)*cp.log(util))
     else:
         obj = cp.Maximize(x.T @ (valuation - prices))
 
-    prob = cp.Problem(obj,
-                      [x.T @ prices <= budget,
-                       x >= 0])
+    constraints = [ (x.T @ prices) <= budget,
+                    x >= 0]
+    prob = cp.Problem(obj, constraints)
+
     prob.solve()
+
     return x.value

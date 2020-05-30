@@ -112,7 +112,7 @@ class FisherMarket:
 
         return (D, S)
 
-    def solveMarket(self, utilities = "linear", printResults = True):
+    def solveMarket(self, utilities = "linear", printResults = True, rho = 1):
         """
         Parameters:
         utilities(string): Denotes the utilities used to solve market
@@ -126,6 +126,12 @@ class FisherMarket:
             alloc, prices = self.solveQuasiLinear(printResults)
         elif (utilities == "linear"):
             alloc, prices = self.solveLinear(printResults)
+        elif (utilities == "leontief"):
+            alloc, prices = self.solveLeontief(printResults)
+        elif (utilities == "cobb-douglas"):
+            alloc, prices = self.solveCobbDouglas(printResults)
+        elif (utilities == "ces"):
+            alloc, prices = self.solveCES(rho, printResults)
         else:
             print(f"Invalid Utility Model : '{utilities}'")
             sys.exit()
@@ -137,21 +143,16 @@ class FisherMarket:
         numberOfEachGood = np.sum(X, axis = 0)
 
         if(printResults):
-            print(f"Budgets of Consuemrs: {self.budgets}\nSpending of Consumers: {X @ p}")
+            print(f"Budgets of Consumers: {self.budgets}\nSpending of Consumers: {X @ p}")
 
-        # Check that number of goods inputted is equal to the number of goods sold
+
+        ##### Sanity Checks ##### 
+
+        # Check that the market clears
         if(np.sum(np.abs(self.numGoodsVec - numberOfEachGood)) > 0.0001):
             print(f"Supply of Goods Vector: {self.numGoodsVec}\nNumber of Goods\
              Allocated: {numberOfEachGood}")
 
-        # assert np.sum(np.abs(self.numGoodsVec - numberOfEachGood)) < 0.001
-
-        # Check that total money spent by buyers is leq to the total budget
-        # of the buyers
-        if(((np.dot(numberOfEachGood, p) - np.sum(self.budgets)) > 0.001) or
-            (np.sum(X @ p - self.budgets) > np.sum(self.budgets)*0.001)):
-            print(f"Money spent by buyers: {X @ p}\nBuyers' budgets: {self.budgets}")
-        assert (np.dot(numberOfEachGood, p) - np.sum(self.budgets)) < np.sum(self.budgets)*0.001
 
         # Check that the money spent by each buyer is less than their budget
         if(np.sum(X @ p - self.budgets) > np.sum(self.budgets)*0.0001):
@@ -161,6 +162,51 @@ class FisherMarket:
 
         return (X,p)
 
+
+    def solveLinear(self, printResults = True):
+        """
+        Solves Fisher Market with Linear utilities
+
+        Returns:
+        A tuple (X, p) that corresponds to the optimal matrix of allocations and
+        prices.
+        """
+
+        numberOfGoods = self.numberOfGoods()
+        numberOfBuyers = self.numberOfBuyers()
+
+        ########### Primal: Output => Allocation #########
+
+        # Variables of program
+        alloc = cp.Variable((numberOfBuyers, numberOfGoods))
+        utils = cp.Variable(numberOfBuyers)
+
+        # Objective
+        obj = cp.Maximize(self.budgets.T @ cp.log(utils))
+
+        constraints = [utils <= cp.sum(cp.multiply(self.valuations, alloc), axis = 1),
+                        cp.sum(alloc, axis = 0) <= 1,
+                        alloc >= 0]
+
+        # Convex Program for primal
+        primal = cp.Problem(obj, constraints)
+
+
+        # Solve Program
+        primal.solve()  # Returns the optimal value.
+
+        X = alloc.value
+
+        # Get dual value directly from CVXPY
+        p = constraints[1].dual_value
+        if(printResults):
+            print("Primal Status (Allocation):", primal.status)
+            print(f"Allocation: {X}\nPrices: {p}")
+            print(f"Value of Supply = {np.dot(self.numGoodsVec, p)}")
+
+        return (X, p)
+
+
     def solveQuasiLinear(self, printResults = True):
         """
         Solves Fisher Market with Quasi-Linear utilities
@@ -169,7 +215,7 @@ class FisherMarket:
         A tuple (X, p) that corresponds to the optimal matrix of allocations and
         prices.
         """
-        numberOfGoods = np.sum(self.numGoodsVec).astype(int)
+        numberOfGoods = self.numberOfGoods()
         numberOfBuyers = self.numberOfBuyers()
 
         ########### Primal: Output => Allocation #########
@@ -195,15 +241,12 @@ class FisherMarket:
         # Solve Program
         dual.solve()  # Returns the optimal value.
 
+        # Get primal maximizer (allocations)
         X = alloc.value
-
-        #   Check if every good is allocated.
-        if(np.sum(np.sum(X, axis = 0) - 1.0) > 0.0001):
-            print(f"Allocation: {X}")
-        assert np.sum(np.sum(X, axis = 0) - 1.0) < 0.0001
-
-        # Get dual value directly from CVXPY
+        # Get dual maximizer (prices) directly from CVXPY
         p = constraints[1].dual_value
+        
+        
         if(printResults):
             print("Status of program:", dual.status)
             print(f"Allocation = {X}\nPrices = {p}")
@@ -211,42 +254,15 @@ class FisherMarket:
 
         return (X, p)
 
-
-        ########### Dual: Output => Prices ###########
-
-        # Variables of program
-        prices = cp.Variable(numberOfGoods)
-        betas = cp.Variable(numberOfBuyers)
-
-        # Objective
-        obj = cp.Minimize(cp.sum(prices) - self.budgets.T @ cp.log(betas))
-
-        # Constraints
-        constraints = ([prices[j] >= cp.multiply(self.valuations[:,j], betas) for j in range(numberOfGoods)] + [betas <= 1])
-
-
-        # Convex Program for primal
-        primal = cp.Problem(obj, constraints)
-
-        # Solve Program
-        primal.solve()  # Returns the optimal value.
-        # print("Primal Status (Price): ", primal.status)
-        # print("Optimal Value Primal (Price): ", primal.value)
-        p = prices.value
-
-
-        return (X, p)
-
-    def solveLinear(self, printResults = True):
+    def solveLeontief(self, printResults):
         """
-        Solves Fisher Market with Linear utilities
+        Solves Fisher Market with Leontief utilities
 
         Returns:
         A tuple (X, p) that corresponds to the optimal matrix of allocations and
         prices.
         """
-
-        numberOfGoods = np.sum(self.numGoodsVec).astype(int)
+        numberOfGoods = self.numberOfGoods()
         numberOfBuyers = self.numberOfBuyers()
 
         ########### Primal: Output => Allocation #########
@@ -258,8 +274,51 @@ class FisherMarket:
         # Objective
         obj = cp.Maximize(self.budgets.T @ cp.log(utils))
 
-        constraints = [utils <= cp.sum(cp.multiply(self.valuations, alloc), axis = 1),
-                        cp.sum(alloc, axis = 0) <= 1,
+        utilConstraints = [(utils[buyer] <= ( alloc[buyer,good] / self.valuations[numberOfBuyers - buyer -1,good])) for good in range(numberOfGoods) for buyer in range(numberOfBuyers)]
+        constraints = [ cp.sum(alloc, axis = 0) <= 1,
+                        alloc >= 0]
+        constraints =  constraints + utilConstraints
+
+        # Convex Program for dual
+        primal = cp.Problem(obj, constraints)
+
+        # Solve Program
+        primal.solve()  # Returns the optimal value.
+
+        # Get primal maximizer
+        X = alloc.value
+        # Get dual value (for prices) directly from CVXPY
+        p = constraints[0].dual_value
+        
+        #### Print Option ####
+        if(printResults):
+            print("Status of program:", primal.status)
+            print(f"Allocation = {X}\nPrices = {p}")
+            print(f"Sum of prices =  {np.sum(p)}\nPrices * Supply of goods = {np.dot(self.numGoodsVec, p)}")
+    
+        return (X,p)
+
+    def solveCobbDouglas(self, printResults):
+        """
+        Solves Fisher Market with Cobb-Douglas utilities
+
+        Returns:
+        A tuple (X, p) that corresponds to the optimal matrix of allocations and
+        prices.
+        """
+
+        numberOfGoods = self.numberOfGoods()
+        numberOfBuyers = self.numberOfBuyers()
+
+        ########### Primal: Output => Allocation #########
+
+        # Variables of program
+        alloc = cp.Variable((numberOfBuyers, numberOfGoods))
+
+        # Objective
+        obj = cp.Maximize(self.budgets.T @ cp.sum(cp.multiply(self.valuations, cp.log(alloc)), axis = 1))
+
+        constraints = [ cp.sum(alloc, axis = 0) <= 1,
                         alloc >= 0]
 
         # Convex Program for primal
@@ -270,10 +329,9 @@ class FisherMarket:
         primal.solve()  # Returns the optimal value.
 
         X = alloc.value
-        assert np.sum(np.sum(X, axis = 0) - 1.0) < 0.0001
 
         # Get dual value directly from CVXPY
-        p = constraints[1].dual_value
+        p = constraints[0].dual_value
         if(printResults):
             print("Primal Status (Allocation):", primal.status)
             print(f"Allocation: {X}\nPrices: {p}")
@@ -281,26 +339,44 @@ class FisherMarket:
 
         return (X, p)
 
-        # Dual program
-        ########### Dual: Output => Prices ###########
+
+    def solveCES(self, rho, printResults = True):
+        """
+        Solves Fisher Market with Linear utilities
+
+        Returns:
+        A tuple (X, p) that corresponds to the optimal matrix of allocations and
+        prices.
+        """
+
+        numberOfGoods = self.numberOfGoods()
+        numberOfBuyers = self.numberOfBuyers()
+
+        ########### Primal: Output => Allocation #########
 
         # Variables of program
-        prices = cp.Variable(numberOfGoods)
-        betas = cp.Variable(numberOfBuyers)
+        alloc = cp.Variable((numberOfBuyers, numberOfGoods))
 
         # Objective
-        obj = cp.Minimize(cp.sum(prices) - self.budgets.T @ cp.log(betas))
+        obj = cp.Maximize(self.budgets.T @ ((1/rho)*cp.log(cp.sum(cp.multiply(self.valuations, cp.power(alloc, rho)), axis = 1))))
 
-        # Constraints
-        constraints = [prices[j] >= cp.multiply(self.valuations[:,j], betas) for j in range(numberOfGoods)]
+        constraints = [ cp.sum(alloc, axis = 0) <= 1,
+                        alloc >= 0]
 
         # Convex Program for primal
-        dual = cp.Problem(obj, constraints)
+        primal = cp.Problem(obj, constraints)
+
 
         # Solve Program
-        dual.solve()  # Returns the optimal value.
-        # print("Dual Status (Price): ", dual.status)
-        # print("Optimal Value Dual (Price): ", dual.value)
-        p = prices.value
+        primal.solve()  # Returns the optimal value.
+
+        X = alloc.value
+
+        # Get dual value directly from CVXPY
+        p = constraints[0].dual_value
+        if(printResults):
+            print("Primal Status (Allocation):", primal.status)
+            print(f"Allocation: {X}\nPrices: {p}")
+            print(f"Value of Supply = {np.dot(self.numGoodsVec, p)}")
 
         return (X, p)
